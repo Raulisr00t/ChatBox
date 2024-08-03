@@ -3,14 +3,14 @@ import sys
 import threading
 from colorama import Fore, Style
 from datetime import datetime
-from scapy.all import ARP,Ether,srp
+from scapy.all import ARP, Ether, srp
 
 def get_local_ip():
     """Get the local IP address of the current machine."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.settimeout(0)
     try:
-        s.connect(('8.8.8.8', 1)) 
+        s.connect(('8.8.8.8', 1))  # Use Google's DNS server to get the IP
         IP = s.getsockname()[0]
     except Exception:
         IP = '127.0.0.1'
@@ -31,7 +31,7 @@ def scan_ips(network):
     ether = Ether(dst="ff:ff:ff:ff:ff:ff")
     packet = ether/arp
 
-    result = srp(packet, timeout=2, verbose=0)[0]
+    result = srp(packet, timeout=2, verbose=1)[0]  # Set verbose to 1 for debugging
     devices = []
 
     for sent, received in result:
@@ -39,8 +39,8 @@ def scan_ips(network):
     
     return devices
 
-# Function to receive messages from the server
 def receive_messages(client):
+    """Receive messages from the server."""
     while True:
         try:
             msg = client.recv(4096).decode()
@@ -52,12 +52,12 @@ def receive_messages(client):
                 break
         
         except ConnectionError:
-            print(Fore.RED + "[-] Connection lost!" + Style.RESET_ALL)
+            print(Fore.RED + "\n[-] Connection lost!" + Style.RESET_ALL)
             sys.exit()
-            break
+            
 
-# Main client function
 def start_client(ip, port):
+    """Start the client and connect to the server."""
     try:
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client.connect((ip, port))
@@ -79,7 +79,6 @@ def start_client(ip, port):
         print(Fore.RED + "[-] Check Your Connection [-]\n" + Style.RESET_ALL)
         sys.exit()
 
-# Entry point for the client
 if __name__ == "__main__":
     print(Fore.RED + "[+] Welcome Chat [+]" + Style.RESET_ALL)
     today = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
@@ -87,13 +86,15 @@ if __name__ == "__main__":
    
     network = get_local_network()
     devices = scan_ips(network)
-    print(Fore.GREEN + "[#] Online User's")
-    
+
+    print(Fore.GREEN + "[#] Online User's" + Style.RESET_ALL)
     for device in devices:
-        print(f"IP: {device['ip']}")
+        print(f"IP: {device['ip']}, MAC: {device['mac']}")
 
     ip = input("[i] Please type an address for chat: ")
+    
     port = 1234
+    
     if not ip:
         print("[-] Try Again, IP cannot be null!\n")
         sys.exit()
