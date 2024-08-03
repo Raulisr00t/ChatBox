@@ -3,6 +3,41 @@ import sys
 import threading
 from colorama import Fore, Style
 from datetime import datetime
+from scapy import ARP,Ether,srp
+
+def get_local_ip():
+    """Get the local IP address of the current machine."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(0)
+    try:
+        s.connect(('8.8.8.8', 1)) 
+        IP = s.getsockname()[0]
+    except Exception:
+        IP = '127.0.0.1'
+    finally:
+        s.close()
+    return IP
+
+def get_local_network():
+    """Get the local network address."""
+    local_ip = get_local_ip()
+    ip_parts = local_ip.split('.')
+    network = '.'.join(ip_parts[:-1]) + '.0/24'
+    return network
+
+def scan_ips(network):
+    """Scan the network to find all active devices."""
+    arp = ARP(pdst=network)
+    ether = Ether(dst="ff:ff:ff:ff:ff:ff")
+    packet = ether/arp
+
+    result = srp(packet, timeout=2, verbose=0)[0]
+    devices = []
+
+    for sent, received in result:
+        devices.append({'ip': received.psrc, 'mac': received.hwsrc})
+    
+    return devices
 
 # Function to receive messages from the server
 def receive_messages(client):
@@ -49,6 +84,13 @@ if __name__ == "__main__":
     print(Fore.RED + "[+] Welcome Chat [+]" + Style.RESET_ALL)
     today = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
     print(Fore.LIGHTBLUE_EX + today + Style.RESET_ALL)
+   
+    network = get_local_network()
+    devices = scan_ips(network)
+    print(Fore.GREEN + "[#] Online User's")
+    
+    for device in devices:
+        print(f"IP: {device['ip']}")
 
     ip = input("[i] Please type an address for chat: ")
     port = 1234
