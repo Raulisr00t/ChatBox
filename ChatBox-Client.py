@@ -3,7 +3,7 @@ import sys
 import threading
 from colorama import Fore, Style
 from datetime import datetime
-from scapy import ARP,Ether,srp
+from scapy.all import ARP,Ether,srp
 
 def get_local_ip():
     """Get the local IP address of the current machine."""
