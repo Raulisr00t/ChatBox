@@ -54,8 +54,9 @@ def receive_messages(conn, addr):
                     break
             else:
                 break
+            
         except ConnectionError:
-            print(Fore.RED + "[-] Connection lost with client {}".format(addr) + Style.RESET_ALL)
+            print(Fore.RED + "\n[-] Connection lost with client {}\n".format(addr) + Style.RESET_ALL)
             sys.exit()
 
 def send_messages(conn, addr):
