@@ -9,7 +9,6 @@ from PyQt5.QtGui import QColor, QPalette, QTextCharFormat, QTextCursor
 from PyQt5.QtCore import pyqtSignal, QObject
 import warnings
 from cryptography.fernet import Fernet
-import asyncio
 import random
 import string
 
@@ -27,7 +26,11 @@ class ChatServer(QWidget):
         self.server = None
         self.client_connections = []
         self.worker_signals = WorkerSignals()
-        
+
+        # Generate a Fernet key and initialize the Fernet object
+        self.key = Fernet.generate_key()
+        self.cipher = Fernet(self.key)
+
         self.worker_signals.message_received.connect(self.append_to_display)
         self.worker_signals.server_status.connect(self.append_to_display)
 
@@ -88,7 +91,8 @@ class ChatServer(QWidget):
         """Send a message from the input field."""
         message = self.message_input.text()
         if message:
-            self.broadcast_message(f"[You]: {message}", QColor(0, 0, 0))  # Black text for user messages
+            encrypted_message = self.cipher.encrypt(message.encode())
+            self.broadcast_message(encrypted_message, QColor(0, 0, 0))  # Black text for user messages
             self.message_input.clear()
 
     def display_online_users(self):
@@ -132,11 +136,16 @@ class ChatServer(QWidget):
         """Handle receiving messages from a client."""
         while True:
             try:
-                msg = conn.recv(4096).decode()
-                if msg:
-                    self.worker_signals.message_received.emit(f"\n[Received message from Client {addr}]: {msg}", QColor(0, 128, 0))  # Green text
-                    if msg.lower() in ["exit", "quit"]:
-                        self.worker_signals.message_received.emit(f"[#] Client {addr} disconnected!", QColor(0, 128, 0))  # Green text
+                encrypted_msg = conn.recv(4096)
+                if encrypted_msg:
+                    try:
+                        msg = self.cipher.decrypt(encrypted_msg).decode()
+                        self.worker_signals.message_received.emit(f"\n[Received message from Client {addr}]: {msg}", QColor(0, 128, 0))  # Green text
+                        if msg.lower() in ["exit", "quit"]:
+                            self.worker_signals.message_received.emit(f"[#] Client {addr} disconnected!", QColor(0, 128, 0))  # Green text
+                            break
+                    except Exception as e:
+                        self.worker_signals.message_received.emit(f"\n[-] Decryption error: {e}\n", QColor(255, 0, 0))  # Red text
                         break
                 else:
                     break
@@ -151,28 +160,24 @@ class ChatServer(QWidget):
                 if conn in self.client_connections:
                     self.client_connections.remove(conn)
 
-    def generate_key(length=32):
-        characters = string.ascii_letters + string.digits  # This includes both letters and digits
-        return ''.join(random.choice(characters) for _ in range(length))
-
-    global key
-    key = generate_key()
-
     def broadcast_message(self, message, color):
         """Send a message to all connected clients and display it."""
         for conn in self.client_connections[:]:
             try:
-                conn.send(message.encode())
+                conn.send(message)
             except OSError:
                 # Handle the case where the socket is no longer valid
                 self.client_connections.remove(conn)
-        self.worker_signals.message_received.emit(message, color)
+        self.worker_signals.message_received.emit("[Broadcast]: Message sent to all clients", color)
 
     def handle_client(self, conn, addr):
         """Handle a new client connection."""
         self.worker_signals.server_status.emit(f"[+] Connection received from {addr}", QColor(0, 0, 255))  # Blue text
         self.worker_signals.server_status.emit("Type Exit or Quit to <Quit>", QColor(255, 0, 0))  # Red text
         
+        # Send the encryption key to the client
+        conn.send(self.key)
+
         threading.Thread(target=self.receive_messages, args=(conn, addr), daemon=True).start()
         self.client_connections.append(conn)
 
