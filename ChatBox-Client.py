@@ -1,9 +1,96 @@
-import socket
 import sys
+import socket
 import threading
-from colorama import Fore, Style
 from datetime import datetime
+from colorama import Fore, Style
 from scapy.all import ARP, Ether, srp
+from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QGridLayout, QLabel, 
+                             QLineEdit, QPushButton, QTextEdit)
+
+class ChatClient(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.init_ui()
+
+    def init_ui(self):
+        self.setWindowTitle('Chat Client')
+        self.setGeometry(100,100,600,500)
+        
+        self.layout = QVBoxLayout()
+        self.grid = QGridLayout()
+
+        self.ip_label = QLabel('IP:')
+        self.ip_input = QLineEdit()
+        self.port_label = QLabel('Port:')
+        self.port_input = QLineEdit()
+        self.port_input.setText('1234')
+        self.connect_btn = QPushButton('Connect')
+        self.connect_btn.clicked.connect(self.start_client)
+
+        self.grid.addWidget(self.ip_label, 0, 0)
+        self.grid.addWidget(self.ip_input, 0, 1)
+        self.grid.addWidget(self.port_label, 1, 0)
+        self.grid.addWidget(self.port_input, 1, 1)
+        self.grid.addWidget(self.connect_btn, 2, 0, 1, 2)
+
+        self.layout.addLayout(self.grid)
+
+        self.chat_display = QTextEdit()
+        self.chat_display.setReadOnly(True)
+        self.layout.addWidget(self.chat_display)
+
+        self.message_input = QLineEdit()
+        self.send_btn = QPushButton('Send')
+        self.send_btn.clicked.connect(self.send_message)
+
+        self.layout.addWidget(self.message_input)
+        self.layout.addWidget(self.send_btn)
+
+        self.setLayout(self.layout)
+        self.client = None
+
+    def start_client(self):
+        ip = self.ip_input.text()
+        port = int(self.port_input.text())
+
+        if not ip:
+            self.chat_display.append("[-] IP cannot be null!\n")
+            return
+
+        try:
+            self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.client.connect((ip, port))
+
+            self.chat_display.append(Fore.RED + "[i] Connection successful with " + ip + Style.RESET_ALL)
+            self.chat_display.append("Type Exit or Quit to <Quit>")
+
+            # Start a thread to receive messages
+            threading.Thread(target=self.receive_messages, daemon=True).start()
+        except (ConnectionError, ConnectionAbortedError, ConnectionRefusedError) as e:
+            self.chat_display.append(Fore.RED + "[-] Check Your Connection [-]\n" + Style.RESET_ALL)
+
+    def receive_messages(self):
+        while True:
+            try:
+                msg = self.client.recv(4096).decode()
+                if msg:
+                    self.chat_display.append(Fore.GREEN + "[Received message from Server]: " + msg + Style.RESET_ALL)
+                else:
+                    break
+            except ConnectionError:
+                self.chat_display.append(Fore.RED + "\n[-] Connection lost!" + Style.RESET_ALL)
+                self.client.close()
+                break
+
+    def send_message(self):
+        if self.client:
+            msg = self.message_input.text()
+            if msg.lower() in ["exit", "quit"]:
+                self.client.close()
+                sys.exit()
+            self.client.send(msg.encode())
+            self.chat_display.append(Fore.YELLOW + "[You]: " + msg + Style.RESET_ALL)
+            self.message_input.clear()
 
 def get_local_ip():
     """Get the local IP address of the current machine."""
@@ -39,51 +126,9 @@ def scan_ips(network):
     
     return devices
 
-def receive_messages(client):
-    """Receive messages from the server."""
-    while True:
-        try:
-            msg = client.recv(4096).decode()
-            if msg:
-                print(Fore.GREEN + "\n[Received message from Server]: " + msg + Style.RESET_ALL)
-                print(Fore.YELLOW + "[>>] Please enter something for chatting with {}: ".format(ip) + Style.RESET_ALL, end='')
-                sys.stdout.flush()
-            else:
-                break
-        
-        except ConnectionError:
-            print(Fore.RED + "\n[-] Connection lost!" + Style.RESET_ALL)
-            sys.exit()
-            
-
-def start_client(ip, port):
-    """Start the client and connect to the server."""
-    try:
-        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client.connect((ip, port))
-        
-        print(Fore.RED + "[i] Connection successful with " + ip + Style.RESET_ALL)
-        print("Type Exit or Quit to <Quit>")
-
-        # Start a thread to receive messages
-        threading.Thread(target=receive_messages, args=(client,), daemon=True).start()
-
-        while True:
-            yourmsg = input(Fore.YELLOW + "[>>] Please enter something for chatting with {}: ".format(ip) + Style.RESET_ALL)
-            if yourmsg.lower() in ["exit", "quit"]:
-                client.close()
-                sys.exit()
-            client.send(yourmsg.encode())
-
-    except (ConnectionError, ConnectionAbortedError, ConnectionRefusedError) as e:
-        print(Fore.RED + "[-] Check Your Connection [-]\n" + Style.RESET_ALL)
-        sys.exit()
-
 if __name__ == "__main__":
-    print(Fore.RED + "[+] Welcome Chat [+]" + Style.RESET_ALL)
-    today = datetime.today().strftime('%Y-%m-%d %H:%M:%S')
-    print(Fore.LIGHTBLUE_EX + today + Style.RESET_ALL)
-   
+    app = QApplication(sys.argv)
+    
     network = get_local_network()
     devices = scan_ips(network)
 
@@ -91,12 +136,7 @@ if __name__ == "__main__":
     for device in devices:
         print(f"IP: {device['ip']}, MAC: {device['mac']}")
 
-    ip = input("[i] Please type an address for chat: ")
-    
-    port = 1234
-    
-    if not ip:
-        print("[-] Try Again, IP cannot be null!\n")
-        sys.exit()
+    window = ChatClient()
+    window.show()
 
-    start_client(ip, port)
+    sys.exit(app.exec_())
