@@ -6,11 +6,16 @@ from scapy.all import ARP, Ether, srp
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QGridLayout, QLabel, 
                              QLineEdit, QPushButton, QTextEdit, QInputDialog)
 from PyQt5.QtGui import QColor, QPalette, QTextCharFormat, QTextCursor
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import QTimer, pyqtSignal, QObject
 import warnings
 from manuf import manuf
 
 warnings.filterwarnings("ignore", message="Wireshark is installed, but cannot read manuf")
+
+class WorkerSignals(QObject):
+    """Signals for communicating from worker thread to the main thread."""
+    message_received = pyqtSignal(str, QColor)
+    server_status = pyqtSignal(str, QColor)
 
 class ChatServer(QWidget):
     def __init__(self):
@@ -18,6 +23,14 @@ class ChatServer(QWidget):
         self.init_ui()
         self.server = None
         self.client_threads = []
+        self.worker_signals = WorkerSignals()
+        self.worker_signals.message_received.connect(self.append_to_display)
+        self.worker_signals.server_status.connect(self.append_to_display)
+        
+        # Add a timer to perform periodic actions
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.periodic_update)
+        self.timer.start(5000)  # Update every 5 seconds
 
     def init_ui(self):
         self.setWindowTitle('Chat Server')
@@ -57,9 +70,9 @@ class ChatServer(QWidget):
         network = self.get_local_network()
         devices = self.scan_ips(network)
 
-        self.append_to_display("[#] Online Users", QColor(0, 128, 0))  # Green text
+        self.worker_signals.server_status.emit("[#] Online Users", QColor(0, 128, 0))  # Green text
         for device in devices:
-            self.append_to_display(f"IP: {device['ip']}, MAC: {device['mac']}")
+            self.worker_signals.server_status.emit(f"IP: {device['ip']}, MAC: {device['mac']}", QColor(0, 128, 0))  # Green text
 
     def get_local_ip(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -97,15 +110,15 @@ class ChatServer(QWidget):
             try:
                 msg = conn.recv(4096).decode()
                 if msg:
-                    self.append_to_display(f"\n[Received message from Client {addr}]: {msg}", QColor(0, 128, 0))  # Green text
+                    self.worker_signals.message_received.emit(f"\n[Received message from Client {addr}]: {msg}", QColor(0, 128, 0))  # Green text
                     if msg.lower() in ["exit", "quit"]:
-                        self.append_to_display(f"[#] Client {addr} disconnected!", QColor(0, 128, 0))  # Green text
+                        self.worker_signals.message_received.emit(f"[#] Client {addr} disconnected!", QColor(0, 128, 0))  # Green text
                         conn.close()
                         break
                 else:
                     break
             except ConnectionError:
-                self.append_to_display(f"\n[-] Connection lost with client {addr}\n", QColor(255, 0, 0))  # Red text
+                self.worker_signals.message_received.emit(f"\n[-] Connection lost with client {addr}\n", QColor(255, 0, 0))  # Red text
                 conn.close()
                 break
 
@@ -117,11 +130,11 @@ class ChatServer(QWidget):
                     conn.close()
                     sys.exit()
                 conn.send(yourmsg.encode())
-                self.append_to_display(f"[You]: {yourmsg}", QColor(255, 255, 0))  # Yellow text
+                self.worker_signals.message_received.emit(f"[You]: {yourmsg}", QColor(255, 255, 0))  # Yellow text
 
     def handle_client(self, conn, addr):
-        self.append_to_display(f"[+] Connection received from {addr}", QColor(0, 0, 255))  # Blue text
-        self.append_to_display("Type Exit or Quit to <Quit>", QColor(255, 0, 0))  # Red text
+        self.worker_signals.server_status.emit(f"[+] Connection received from {addr}", QColor(0, 0, 255))  # Blue text
+        self.worker_signals.server_status.emit("Type Exit or Quit to <Quit>", QColor(255, 0, 0))  # Red text
         
         threading.Thread(target=self.receive_messages, args=(conn, addr), daemon=True).start()
         self.send_messages(conn, addr)
@@ -136,11 +149,11 @@ class ChatServer(QWidget):
             self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server.bind(("0.0.0.0", port))
             self.server.listen(3)
-            self.append_to_display(f"[+] Server listening on port {port}", QColor(255, 0, 0))  # Red text
+            self.worker_signals.server_status.emit(f"[+] Server listening on port {port}", QColor(255, 0, 0))  # Red text
             
             # Display the current date and time
             current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            self.append_to_display(f"[+] Server started at {current_datetime}", QColor(0, 0, 255))  # Blue text
+            self.worker_signals.server_status.emit(f"[+] Server started at {current_datetime}", QColor(0, 0, 255))  # Blue text
             
             while True:
                 conn, addr = self.server.accept()
@@ -149,7 +162,7 @@ class ChatServer(QWidget):
                 self.client_threads.append(client_thread)
 
         except Exception as e:
-            self.append_to_display(f"[-] Server error: {e}", QColor(255, 0, 0))  # Red text
+            self.worker_signals.server_status.emit(f"[-] Server error: {e}", QColor(255, 0, 0))  # Red text
             if self.server:
                 self.server.close()
 
@@ -162,6 +175,11 @@ class ChatServer(QWidget):
         cursor.insertText(text + '\n', format)
         self.status_display.setTextCursor(cursor)
         self.status_display.ensureCursorVisible()
+
+    def periodic_update(self):
+        """Update the status display periodically."""
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        self.worker_signals.server_status.emit(f"Periodic update at {current_time}", QColor(0, 0, 255))  # Blue text
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
