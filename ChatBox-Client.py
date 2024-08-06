@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QGridLayout, QL
                              QLineEdit, QPushButton, QTextEdit, QMessageBox)
 from PyQt5.QtGui import QColor, QPalette
 from cryptography.fernet import Fernet
+import base64
 from scapy.all import ARP,Ether,srp
 
 class ChatClient(QWidget):
@@ -72,7 +73,8 @@ class ChatClient(QWidget):
             self.client.connect((ip, port))
 
             # Receive the Fernet key from the server
-            key = self.client.recv(32)  # Adjust size if needed
+            key_base64 = self.client.recv(44).decode()  # 44 is the length of a base64 encoded 32-byte key
+            key = base64.urlsafe_b64decode(key_base64)  # Decode the base64 key
             self.cipher = Fernet(key)
 
             self.chat_display.append("[INFO] Connection successful with " + ip)
@@ -121,7 +123,7 @@ class ChatClient(QWidget):
         user_list = "\n".join(f"IP: {device['ip']}" for device in devices)
         QMessageBox.information(self, "Online Users", user_list)
 
-
+# Utility functions
 def get_local_ip():
     """Get the local IP address of the current machine."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
