@@ -4,13 +4,11 @@ import threading
 from datetime import datetime
 from scapy.all import ARP, Ether, srp
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QGridLayout, QLabel, 
-                             QLineEdit, QPushButton, QTextEdit, QInputDialog)
+                             QLineEdit, QPushButton, QTextEdit , QInputDialog)
 from PyQt5.QtGui import QColor, QPalette, QTextCharFormat, QTextCursor
 from PyQt5.QtCore import QTimer, pyqtSignal, QObject
 import warnings
-from manuf import manuf
 import asyncio
-from cryptography.fernet import Fernet
 
 warnings.filterwarnings("ignore", message="Wireshark is installed, but cannot read manuf")
 
@@ -26,6 +24,7 @@ class ChatServer(QWidget):
         self.server = None
         self.client_threads = []
         self.worker_signals = WorkerSignals()
+        
         self.worker_signals.message_received.connect(self.append_to_display)
         self.worker_signals.server_status.connect(self.append_to_display)
         
@@ -36,7 +35,7 @@ class ChatServer(QWidget):
 
     def init_ui(self):
         self.setWindowTitle('Chat Server')
-        self.setGeometry(100, 100, 600, 500)
+        self.setGeometry(100, 100, 600, 600)
 
         # Set background color
         palette = QPalette()
@@ -66,7 +65,23 @@ class ChatServer(QWidget):
         self.status_display.setReadOnly(True)
         self.layout.addWidget(self.status_display)
 
+        self.message_input = QLineEdit()
+        self.message_input.setPlaceholderText('Enter your message here...')
+        self.message_input.returnPressed.connect(self.send_message_from_input)
+        self.layout.addWidget(self.message_input)
+
+        self.error_label = QLabel('')  # Label for error messages
+        self.layout.addWidget(self.error_label)
+
         self.setLayout(self.layout)
+
+    def send_message_from_input(self):
+        """Send a message from the input field."""
+        message = self.message_input.text()
+        if message:
+            # This will be sent to all connected clients
+            self.broadcast_message(f"[You]: {message}", QColor(255, 255, 0))
+            self.message_input.clear()
 
     def display_online_users(self):
         network = self.get_local_network()
@@ -77,15 +92,13 @@ class ChatServer(QWidget):
             self.worker_signals.server_status.emit(f"IP: {device['ip']}, MAC: {device['mac']}", QColor(0, 128, 0))  # Green text
 
     def get_local_ip(self):
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0)
         try:
-            s.connect(('8.8.8.8', 1)) 
-            IP = s.getsockname()[0]
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.settimeout(0)
+                s.connect(('8.8.8.8', 1))
+                IP = s.getsockname()[0]
         except Exception:
             IP = '127.0.0.1'
-        finally:
-            s.close()
         return IP
 
     def get_local_network(self):
@@ -115,37 +128,52 @@ class ChatServer(QWidget):
                     self.worker_signals.message_received.emit(f"\n[Received message from Client {addr}]: {msg}", QColor(0, 128, 0))  # Green text
                     if msg.lower() in ["exit", "quit"]:
                         self.worker_signals.message_received.emit(f"[#] Client {addr} disconnected!", QColor(0, 128, 0))  # Green text
-                        conn.close()
                         break
                 else:
                     break
             except ConnectionError:
                 self.worker_signals.message_received.emit(f"\n[-] Connection lost with client {addr}\n", QColor(255, 0, 0))  # Red text
-                conn.close()
                 break
+            finally:
+                conn.close()
+
+    def broadcast_message(self, message, color):
+        """Send a message to all connected clients and display it."""
+        for conn in self.client_threads:
+            conn.send(message.encode())
+        self.worker_signals.message_received.emit(message, color)
 
     def send_messages(self, conn, addr):
         while True:
-            yourmsg, ok = QInputDialog.getText(self, f"Chat with {addr}", "Enter your message:")
-            if ok and yourmsg:
-                if yourmsg.lower() in ["exit", "quit"]:
+            reply = self.get_message(f"Chat with {addr}")
+            if reply:
+                if reply.lower() in ["exit", "quit"]:
                     conn.close()
-                    sys.exit()
-                conn.send(yourmsg.encode())
-                self.worker_signals.message_received.emit(f"[You]: {yourmsg}", QColor(255, 255, 0))  # Yellow text
+                    break
+                conn.send(reply.encode())
+                self.worker_signals.message_received.emit(f"[You]: {reply}", QColor(255, 255, 0))  # Yellow text
+
+    def get_message(self, title):
+        """Display a message input dialog and return the input text."""
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.setLabelText("Enter your message:")
+        dialog.setModal(True)
+        if dialog.exec_() == QInputDialog.Accepted:
+            return dialog.textValue()
+        return None
 
     def handle_client(self, conn, addr):
         self.worker_signals.server_status.emit(f"[+] Connection received from {addr}", QColor(0, 0, 255))  # Blue text
         self.worker_signals.server_status.emit("Type Exit or Quit to <Quit>", QColor(255, 0, 0))  # Red text
         
         threading.Thread(target=self.receive_messages, args=(conn, addr), daemon=True).start()
-        self.send_messages(conn, addr)
 
     def start_server_thread(self):
         threading.Thread(target=self.start_server, daemon=True).start()
 
     def start_server(self):
-        port = int(self.port_input.text())
+        port = self.get_valid_port()
 
         try:
             self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -161,12 +189,28 @@ class ChatServer(QWidget):
                 conn, addr = self.server.accept()
                 client_thread = threading.Thread(target=self.handle_client, args=(conn, addr), daemon=True)
                 client_thread.start()
-                self.client_threads.append(client_thread)
+                self.client_threads.append(conn)
 
-        except Exception as e:
-            self.worker_signals.server_status.emit(f"[-] Server error: {e}", QColor(255, 0, 0))  # Red text
+        except socket.error as e:
+            self.set_error_message(f"[-] Server error: {e}")  # Set error message in label
+        finally:
             if self.server:
                 self.server.close()
+
+    def get_valid_port(self):
+        """Get a valid port number from user input."""
+        try:
+            port = int(self.port_input.text())
+            if not (1024 <= port <= 65535):
+                raise ValueError("Port number must be between 1024 and 65535.")
+            return port
+        except ValueError as e:
+            self.set_error_message(str(e))  # Set error message in label
+            return 1234  # Default port
+
+    def set_error_message(self, message):
+        """Set the error message in the QLabel."""
+        self.error_label.setText(message)
 
     def append_to_display(self, text, color=QColor(0, 0, 0)):
         """Append text to the status display with the specified color."""
