@@ -2,15 +2,14 @@ import sys
 import socket
 import threading
 from datetime import datetime
-from scapy.all import ARP, Ether, srp
+import base64
+from cryptography.fernet import Fernet
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QGridLayout, QLabel, 
                              QLineEdit, QPushButton, QTextEdit)
 from PyQt5.QtGui import QColor, QPalette, QTextCharFormat, QTextCursor
 from PyQt5.QtCore import pyqtSignal, QObject
 import warnings
-from cryptography.fernet import Fernet
-import random
-import string
+from scapy.all import ARP, Ether, srp
 
 warnings.filterwarnings("ignore", message="Wireshark is installed, but cannot read manuf")
 
@@ -26,11 +25,9 @@ class ChatServer(QWidget):
         self.server = None
         self.client_connections = []
         self.worker_signals = WorkerSignals()
-
-        # Generate a Fernet key and initialize the Fernet object
-        self.key = Fernet.generate_key()
-        self.cipher = Fernet(self.key)
-
+        self.key = None
+        self.cipher = None
+        
         self.worker_signals.message_received.connect(self.append_to_display)
         self.worker_signals.server_status.connect(self.append_to_display)
 
@@ -87,100 +84,6 @@ class ChatServer(QWidget):
 
         self.setLayout(self.layout)
 
-    def send_message_from_input(self):
-        """Send a message from the input field."""
-        message = self.message_input.text()
-        if message:
-            encrypted_message = self.cipher.encrypt(message.encode())
-            self.broadcast_message(encrypted_message, QColor(0, 0, 0))  # Black text for user messages
-            self.message_input.clear()
-
-    def display_online_users(self):
-        network = self.get_local_network()
-        devices = self.scan_ips(network)
-
-        self.worker_signals.server_status.emit("[#] Online Users", QColor(0, 128, 0))  # Green text
-        for device in devices:
-            self.worker_signals.server_status.emit(f"IP: {device['ip']}, MAC: {device['mac']}", QColor(0, 128, 0))  # Green text
-
-    def get_local_ip(self):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.settimeout(0)
-                s.connect(('8.8.8.8', 1))
-                IP = s.getsockname()[0]
-        except Exception:
-            IP = '127.0.0.1'
-        return IP
-
-    def get_local_network(self):
-        local_ip = self.get_local_ip()
-        ip_parts = local_ip.split('.')
-        network = '.'.join(ip_parts[:-1]) + '.0/24'
-        return network
-
-    def scan_ips(self, network):
-        arp = ARP(pdst=network)
-        ether = Ether(dst="ff:ff:ff:ff:ff:ff")
-        packet = ether/arp
-
-        result = srp(packet, timeout=2, verbose=0)[0]
-        devices = []
-
-        for sent, received in result:
-            devices.append({'ip': received.psrc, 'mac': received.hwsrc})
-
-        return devices
-
-    def receive_messages(self, conn, addr):
-        """Handle receiving messages from a client."""
-        while True:
-            try:
-                encrypted_msg = conn.recv(4096)
-                if encrypted_msg:
-                    try:
-                        msg = self.cipher.decrypt(encrypted_msg).decode()
-                        self.worker_signals.message_received.emit(f"\n[Received message from Client {addr}]: {msg}", QColor(0, 128, 0))  # Green text
-                        if msg.lower() in ["exit", "quit"]:
-                            self.worker_signals.message_received.emit(f"[#] Client {addr} disconnected!", QColor(0, 128, 0))  # Green text
-                            break
-                    except Exception as e:
-                        self.worker_signals.message_received.emit(f"\n[-] Decryption error: {e}\n", QColor(255, 0, 0))  # Red text
-                        break
-                else:
-                    break
-            except ConnectionError:
-                self.worker_signals.message_received.emit(f"\n[-] Connection lost with client {addr}\n", QColor(255, 0, 0))  # Red text
-                break
-            except OSError as e:
-                self.worker_signals.message_received.emit(f"\n[-] Socket error with client {addr}: {e}\n", QColor(255, 0, 0))  # Red text
-                break
-            finally:
-                conn.close()
-                if conn in self.client_connections:
-                    self.client_connections.remove(conn)
-
-    def broadcast_message(self, message, color):
-        """Send a message to all connected clients and display it."""
-        for conn in self.client_connections[:]:
-            try:
-                conn.send(message)
-            except OSError:
-                # Handle the case where the socket is no longer valid
-                self.client_connections.remove(conn)
-        self.worker_signals.message_received.emit("[Broadcast]: Message sent to all clients", color)
-
-    def handle_client(self, conn, addr):
-        """Handle a new client connection."""
-        self.worker_signals.server_status.emit(f"[+] Connection received from {addr}", QColor(0, 0, 255))  # Blue text
-        self.worker_signals.server_status.emit("Type Exit or Quit to <Quit>", QColor(255, 0, 0))  # Red text
-        
-        # Send the encryption key to the client
-        conn.send(self.key)
-
-        threading.Thread(target=self.receive_messages, args=(conn, addr), daemon=True).start()
-        self.client_connections.append(conn)
-
     def start_server_thread(self):
         """Start the server in a new thread."""
         threading.Thread(target=self.start_server, daemon=True).start()
@@ -199,9 +102,15 @@ class ChatServer(QWidget):
             current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             self.worker_signals.server_status.emit(f"[+] Server started at {current_datetime}", QColor(0, 0, 255))  # Blue text
             
+            # Generate and send the Fernet key
+            self.key = Fernet.generate_key()
+            self.cipher = Fernet(self.key)
+            key_str = base64.urlsafe_b64encode(self.key).decode()  # Ensure the key is URL-safe base64 encoded
+
             while True:
                 try:
                     conn, addr = self.server.accept()
+                    conn.send(key_str.encode())  # Send the key as a base64 encoded string
                     threading.Thread(target=self.handle_client, args=(conn, addr), daemon=True).start()
                 except OSError as e:
                     self.worker_signals.server_status.emit(f"[-] Server accept error: {e}", QColor(255, 0, 0))  # Red text
@@ -212,6 +121,56 @@ class ChatServer(QWidget):
         finally:
             if self.server:
                 self.server.close()
+
+    def handle_client(self, conn, addr):
+        """Handle a new client connection."""
+        self.worker_signals.server_status.emit(f"[+] Connection received from {addr}", QColor(0, 0, 255))  # Blue text
+        self.worker_signals.server_status.emit("Type Exit or Quit to <Quit>", QColor(255, 0, 0))  # Red text
+        
+        threading.Thread(target=self.receive_messages, args=(conn, addr), daemon=True).start()
+        self.client_connections.append(conn)
+
+    def receive_messages(self, conn, addr):
+        """Handle receiving messages from a client."""
+        while True:
+            try:
+                encrypted_msg = conn.recv(4096)
+                if encrypted_msg:
+                    msg = self.cipher.decrypt(encrypted_msg).decode()
+                    self.worker_signals.message_received.emit(f"\n[Received message from Client {addr}]: {msg}", QColor(0, 128, 0))  # Green text
+                    if msg.lower() in ["exit", "quit"]:
+                        self.worker_signals.message_received.emit(f"[#] Client {addr} disconnected!", QColor(0, 128, 0))  # Green text
+                        break
+                else:
+                    break
+            except ConnectionError:
+                self.worker_signals.message_received.emit(f"\n[-] Connection lost with client {addr}\n", QColor(255, 0, 0))  # Red text
+                break
+            except Exception as e:
+                self.worker_signals.message_received.emit(f"\n[-] Error: {e}\n", QColor(255, 0, 0))  # Red text
+                break
+            finally:
+                conn.close()
+                if conn in self.client_connections:
+                    self.client_connections.remove(conn)
+
+    def send_message_from_input(self):
+        """Send a message from the input field."""
+        message = self.message_input.text()
+        if message:
+            encrypted_message = self.cipher.encrypt(message.encode())
+            self.broadcast_message(encrypted_message, QColor(0, 0, 0))  # Black text for user messages
+            self.message_input.clear()
+
+    def broadcast_message(self, message, color):
+        """Send a message to all connected clients and display it."""
+        for conn in self.client_connections[:]:
+            try:
+                conn.send(message)
+            except OSError:
+                # Handle the case where the socket is no longer valid
+                self.client_connections.remove(conn)
+        self.worker_signals.message_received.emit(message.decode(), color)
 
     def get_valid_port(self):
         """Get and validate the port number from user input."""
@@ -237,6 +196,46 @@ class ChatServer(QWidget):
         cursor.insertText(text + '\n', format)
         self.status_display.setTextCursor(cursor)
         self.status_display.ensureCursorVisible()
+
+    def display_online_users(self):
+        network = self.get_local_network()
+        devices = self.scan_ips(network)
+
+        self.worker_signals.server_status.emit("[#] Online Users", QColor(0, 128, 0))  # Green text
+        for device in devices:
+            self.worker_signals.server_status.emit(f"IP: {device['ip']}", QColor(0, 128, 0))  # Green text
+
+    def get_local_ip(self):
+        """Get the local IP address of the current machine."""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.settimeout(0)
+                s.connect(('8.8.8.8', 1))
+                IP = s.getsockname()[0]
+        except Exception:
+            IP = '127.0.0.1'
+        return IP
+
+    def get_local_network(self):
+        """Get the local network address."""
+        local_ip = self.get_local_ip()
+        ip_parts = local_ip.split('.')
+        network = '.'.join(ip_parts[:-1]) + '.0/24'
+        return network
+
+    def scan_ips(self, network):
+        """Scan the network to find all active devices."""
+        arp = ARP(pdst=network)
+        ether = Ether(dst="ff:ff:ff:ff:ff:ff")
+        packet = ether/arp
+
+        result = srp(packet, timeout=2, verbose=0)[0]
+        devices = []
+
+        for sent, received in result:
+            devices.append({'ip': received.psrc})
+
+        return devices
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
