@@ -9,6 +9,8 @@ from PyQt5.QtGui import QColor, QPalette, QTextCharFormat, QTextCursor
 from PyQt5.QtCore import QTimer, pyqtSignal, QObject
 import warnings
 from manuf import manuf
+import asyncio
+from cryptography.fernet import Fernet
 
 warnings.filterwarnings("ignore", message="Wireshark is installed, but cannot read manuf")
 
