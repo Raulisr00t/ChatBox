@@ -1,15 +1,14 @@
 import sys
 import socket
 import threading
-from colorama import Fore, Style
 from datetime import datetime
 from scapy.all import ARP, Ether, srp
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QGridLayout, QLabel, 
-                             QLineEdit, QPushButton, QTextEdit, QMessageBox)
-from PyQt5.QtGui import QColor, QPalette
+                             QLineEdit, QPushButton, QTextEdit, QInputDialog)
+from PyQt5.QtGui import QColor, QPalette, QTextCharFormat, QTextCursor
+from PyQt5.QtCore import QTimer
 import warnings
 from manuf import manuf
-import time
 
 warnings.filterwarnings("ignore", message="Wireshark is installed, but cannot read manuf")
 
@@ -36,7 +35,7 @@ class ChatServer(QWidget):
         self.port_input = QLineEdit()
         self.port_input.setText('1234')
         self.start_btn = QPushButton('Start Server')
-        self.start_btn.clicked.connect(self.start_server)
+        self.start_btn.clicked.connect(self.start_server_thread)
 
         self.scan_btn = QPushButton('See Online Users')
         self.scan_btn.clicked.connect(self.display_online_users)
@@ -58,9 +57,9 @@ class ChatServer(QWidget):
         network = self.get_local_network()
         devices = self.scan_ips(network)
 
-        self.status_display.append("[#] Online User's")
+        self.append_to_display("[#] Online Users", QColor(0, 128, 0))  # Green text
         for device in devices:
-            self.status_display.append(f"IP: {device['ip']}, MAC: {device['mac']}")
+            self.append_to_display(f"IP: {device['ip']}, MAC: {device['mac']}")
 
     def get_local_ip(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -98,43 +97,50 @@ class ChatServer(QWidget):
             try:
                 msg = conn.recv(4096).decode()
                 if msg:
-                    self.status_display.append(Fore.GREEN + "\n[Received message from Client {}]: {}".format(addr, msg) + Style.RESET_ALL)
+                    self.append_to_display(f"\n[Received message from Client {addr}]: {msg}", QColor(0, 128, 0))  # Green text
                     if msg.lower() in ["exit", "quit"]:
-                        self.status_display.append(Fore.GREEN + "[#] Client {} disconnected!".format(addr) + Style.RESET_ALL)
+                        self.append_to_display(f"[#] Client {addr} disconnected!", QColor(0, 128, 0))  # Green text
                         conn.close()
                         break
                 else:
                     break
             except ConnectionError:
-                self.status_display.append(Fore.RED + "\n[-] Connection lost with client {}\n".format(addr) + Style.RESET_ALL)
+                self.append_to_display(f"\n[-] Connection lost with client {addr}\n", QColor(255, 0, 0))  # Red text
                 conn.close()
                 break
 
     def send_messages(self, conn, addr):
         while True:
-            yourmsg = input(Fore.YELLOW + "[>>] Please enter something for chat with {}: ".format(addr) + Style.RESET_ALL)
-            if yourmsg.lower() in ["exit", "quit"]:
-                conn.close()
-                sys.exit()
-            conn.send(yourmsg.encode())
+            yourmsg, ok = QInputDialog.getText(self, f"Chat with {addr}", "Enter your message:")
+            if ok and yourmsg:
+                if yourmsg.lower() in ["exit", "quit"]:
+                    conn.close()
+                    sys.exit()
+                conn.send(yourmsg.encode())
+                self.append_to_display(f"[You]: {yourmsg}", QColor(255, 255, 0))  # Yellow text
 
     def handle_client(self, conn, addr):
-        self.status_display.append(Fore.LIGHTBLUE_EX + "[+] Connection received from " + str(addr) + Style.RESET_ALL)
-        self.status_display.append(Fore.RED + "Type Exit or Quit to <Quit>" + Style.RESET_ALL)
+        self.append_to_display(f"[+] Connection received from {addr}", QColor(0, 0, 255))  # Blue text
+        self.append_to_display("Type Exit or Quit to <Quit>", QColor(255, 0, 0))  # Red text
         
         threading.Thread(target=self.receive_messages, args=(conn, addr), daemon=True).start()
         self.send_messages(conn, addr)
 
+    def start_server_thread(self):
+        threading.Thread(target=self.start_server, daemon=True).start()
+
     def start_server(self):
         port = int(self.port_input.text())
-        current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        self.status_display.append(f"[+] Server Started at {current_datetime}")
-        
+
         try:
             self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server.bind(("0.0.0.0", port))
             self.server.listen(3)
-            self.status_display.append(Fore.RED + "[+] Server listening on port {}".format(port) + Style.RESET_ALL)
+            self.append_to_display(f"[+] Server listening on port {port}", QColor(255, 0, 0))  # Red text
+            
+            # Display the current date and time
+            current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            self.append_to_display(f"[+] Server started at {current_datetime}", QColor(0, 0, 255))  # Blue text
             
             while True:
                 conn, addr = self.server.accept()
@@ -143,9 +149,19 @@ class ChatServer(QWidget):
                 self.client_threads.append(client_thread)
 
         except Exception as e:
-            self.status_display.append(Fore.RED + "[-] Server error: {}".format(e) + Style.RESET_ALL)
+            self.append_to_display(f"[-] Server error: {e}", QColor(255, 0, 0))  # Red text
             if self.server:
                 self.server.close()
+
+    def append_to_display(self, text, color=QColor(0, 0, 0)):
+        """Append text to the status display with the specified color."""
+        cursor = self.status_display.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        format = QTextCharFormat()
+        format.setForeground(color)
+        cursor.insertText(text + '\n', format)
+        self.status_display.setTextCursor(cursor)
+        self.status_display.ensureCursorVisible()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
