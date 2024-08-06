@@ -10,6 +10,8 @@ from PyQt5.QtCore import pyqtSignal, QObject
 import warnings
 from cryptography.fernet import Fernet
 import asyncio
+import random
+import string
 
 warnings.filterwarnings("ignore", message="Wireshark is installed, but cannot read manuf")
 
@@ -148,6 +150,13 @@ class ChatServer(QWidget):
                 conn.close()
                 if conn in self.client_connections:
                     self.client_connections.remove(conn)
+
+    def generate_key(length=32):
+        characters = string.ascii_letters + string.digits  # This includes both letters and digits
+        return ''.join(random.choice(characters) for _ in range(length))
+
+    global key
+    key = generate_key()
 
     def broadcast_message(self, message, color):
         """Send a message to all connected clients and display it."""
