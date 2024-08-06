@@ -5,9 +5,13 @@ from colorama import Fore, Style
 from datetime import datetime
 from scapy.all import ARP, Ether, srp
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QGridLayout, QLabel, 
-                             QLineEdit, QPushButton, QTextEdit)
+                             QLineEdit, QPushButton, QTextEdit, QMessageBox)
+from PyQt5.QtGui import QColor, QPalette
 import warnings
-warnings.simplefilter(action=Warning,category=UserWarning)
+from manuf import manuf
+import time
+
+warnings.filterwarnings("ignore", message="Wireshark is installed, but cannot read manuf")
 
 class ChatServer(QWidget):
     def __init__(self):
@@ -18,7 +22,12 @@ class ChatServer(QWidget):
 
     def init_ui(self):
         self.setWindowTitle('Chat Server')
-        self.setGeometry(100,100,600,500)
+        self.setGeometry(100, 100, 600, 500)
+
+        # Set background color
+        palette = QPalette()
+        palette.setColor(QPalette.Window, QColor(230, 230, 250))
+        self.setPalette(palette)
 
         self.layout = QVBoxLayout()
         self.grid = QGridLayout()
@@ -29,9 +38,13 @@ class ChatServer(QWidget):
         self.start_btn = QPushButton('Start Server')
         self.start_btn.clicked.connect(self.start_server)
 
+        self.scan_btn = QPushButton('See Online Users')
+        self.scan_btn.clicked.connect(self.display_online_users)
+
         self.grid.addWidget(self.port_label, 0, 0)
         self.grid.addWidget(self.port_input, 0, 1)
         self.grid.addWidget(self.start_btn, 1, 0, 1, 2)
+        self.grid.addWidget(self.scan_btn, 2, 0, 1, 2)
 
         self.layout.addLayout(self.grid)
 
@@ -40,14 +53,12 @@ class ChatServer(QWidget):
         self.layout.addWidget(self.status_display)
 
         self.setLayout(self.layout)
-        
-        self.display_online_users()
 
     def display_online_users(self):
         network = self.get_local_network()
         devices = self.scan_ips(network)
 
-        self.status_display.append(Fore.GREEN + "[#] Online User's" + Style.RESET_ALL)
+        self.status_display.append("[#] Online User's")
         for device in devices:
             self.status_display.append(f"IP: {device['ip']}, MAC: {device['mac']}")
 
@@ -79,7 +90,7 @@ class ChatServer(QWidget):
 
         for sent, received in result:
             devices.append({'ip': received.psrc, 'mac': received.hwsrc})
-        
+
         return devices
 
     def receive_messages(self, conn, addr):
@@ -116,7 +127,9 @@ class ChatServer(QWidget):
 
     def start_server(self):
         port = int(self.port_input.text())
-
+        current_datetime = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        self.status_display.append(f"[+] Server Started at {current_datetime}")
+        
         try:
             self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server.bind(("0.0.0.0", port))
