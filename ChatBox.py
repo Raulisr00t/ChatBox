@@ -1,4 +1,4 @@
-import sys
+import sys,os
 import socket
 import threading
 from datetime import datetime
@@ -10,8 +10,10 @@ from PyQt5.QtGui import QColor, QPalette, QTextCharFormat, QTextCursor
 from PyQt5.QtCore import pyqtSignal, QObject
 import warnings
 from scapy.all import ARP, Ether, srp
+import platform
 
 warnings.filterwarnings("ignore", message="Wireshark is installed, but cannot read manuf")
+os_type = platform.uname().system
 
 class WorkerSignals(QObject):
     """Signals for communicating from worker thread to the main thread."""
@@ -91,7 +93,10 @@ class ChatServer(QWidget):
     def start_server(self):
         """Initialize and start the server."""
         port = self.get_valid_port()
-
+        if os_type.lower() == "Windows":
+            name = os.getenv("USERNAME")
+        else:
+            pass #For now
         try:
             self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server.bind(("0.0.0.0", port))
@@ -111,6 +116,8 @@ class ChatServer(QWidget):
                 try:
                     conn, addr = self.server.accept()
                     conn.send(key_str.encode())  # Send the key as a base64 encoded string
+                    conn.send(name.encode())
+
                     threading.Thread(target=self.handle_client, args=(conn, addr), daemon=True).start()
                 except OSError as e:
                     self.worker_signals.server_status.emit(f"[-] Server accept error: {e}", QColor(255, 0, 0))  # Red text
@@ -127,13 +134,20 @@ class ChatServer(QWidget):
         self.worker_signals.server_status.emit(f"[+] Connection received from {addr}", QColor(0, 0, 255))  # Blue text
         self.worker_signals.server_status.emit("Type Exit or Quit to <Quit>", QColor(255, 0, 0))  # Red text
         
-        threading.Thread(target=self.receive_messages, args=(conn, addr), daemon=True).start()
-        self.client_connections.append(conn)
+        try:
+            threading.Thread(target=self.receive_messages, args=(conn, addr), daemon=True).start()
+            self.client_connections.append(conn)
+        except Exception as e:
+            self.worker_signals.server_status.emit(f"[-] Error handling client {addr}: {e}", QColor(255, 0, 0))  # Red text
+            conn.close()
 
     def receive_messages(self, conn, addr):
         """Handle receiving messages from a client."""
         while True:
             try:
+                name = conn.recv(1024)
+                self.append_to_display(name)
+    
                 encrypted_msg = conn.recv(4096)
                 if encrypted_msg:
                     msg = self.cipher.decrypt(encrypted_msg).decode()
